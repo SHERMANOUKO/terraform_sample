@@ -1,3 +1,5 @@
+# https://blog.gruntwork.io/a-comprehensive-guide-to-managing-secrets-in-your-terraform-code-1d586955ace1
+
 # resource "aws_iam_user" "example" {
 #   count = 3
 #   name  = "neo.${count.index}"
@@ -197,6 +199,125 @@ resource "aws_instance" "example_2" {
 }
 
 # how to handle secrets, such as passwords, API keys, and other sensitive data,
+
+#1: Environment Variables
+
+# declare variables for the secrets you wish to pass in:
+
+variable "username" {
+  description = "The username for the DB master user"
+  type        = string
+}
+
+variable "password" {
+  description = "The password for the DB master user"
+  type        = string
+}
+
+# pass the variables to the Terraform resources that need those secrets
+resource "aws_db_instance" "example" {
+  engine               = "mysql"
+  engine_version       = "5.7"
+  instance_class       = "db.t2.micro"
+  name                 = "example"
+  # Set the secrets from variables
+  username             = var.username
+  password             = var.password
+}
+
+# Set secrets via environment variables as below
+# export TF_VAR_username=(the username)
+# export TF_VAR_password=(the password)
+
+# When you run Terraform, it'll pick up the secrets automatically
+# terraform apply
+
+#2: Encrypted Files (e.g., AWS KMS, GCP KMS, AZURE Key Vault)
+# An example using AWS KMS
+
+
+# create a file called db-creds.yml with your secrets -- do NOT check this file into version control!
+# username: admin
+# password: password
+
+# encrypt this file by using the aws kms encrypt command 
+# and writing the resulting cipher text to db-creds.yml.encrypted
+
+# aws kms encrypt \
+#   --key-id <YOUR KMS KEY> \
+#   --region <AWS REGION> \
+#   --plaintext fileb://db-creds.yml \
+#   --output text \
+#   --query CiphertextBlob \
+#   > db-creds.yml.encrypted
+
+# You can now safely check db-creds.yml.encrypted into version control.
+
+#  To decrypt the secrets from this file in your Terraform code, 
+# you can use the aws_kms_secrets data source 
+# (for GCP KMS or Azure Key Vault, you’d instead use 
+# the google_kms_secret or azurerm_key_vault_secret data sources, respectively):
+
+data "aws_kms_secrets" "creds" {
+  secret {
+    name    = "db"
+    payload = file("${path.module}/db-creds.yml.encrypted")
+  }
+}
+
+# You can parse the YAML as follows
+locals {
+  db_creds = yamldecode(data.aws_kms_secrets.creds.plaintext["db"])
+}
+
+# read the username and password from that YAML and pass them to the aws_db_instance resource
+resource "aws_db_instance" "example" {
+  engine               = "mysql"
+  engine_version       = "5.7"
+  instance_class       = "db.t2.micro"
+  name                 = "example"
+  # Set the secrets from the encrypted file
+  username = local.db_creds.username
+  password = local.db_creds.password
+}
+
+# An example using AWS KMS with sops and Terragrunt
+#  https://github.com/mozilla/sops
+# https://terragrunt.gruntwork.io/ and https://terragrunt.gruntwork.io/docs/getting-started/quick-start/
+
+# you used sops to create an encrypted YAML file called db-creds.yml
+locals {
+  db_creds = yamldecode(sops_decrypt_file(("db-creds.yml")))
+}
+
+# you can pass username and password as inputs to your Terraform code:
+inputs = {
+  username = local.db_creds.username
+  password = local.db_creds.password
+}
+
+# Terraform code, in turn, can read these inputs via variables
+variable "username" {
+  description = "The username for the DB master user"
+  type        = string
+}
+
+variable "password" {
+  description = "The password for the DB master user"
+  type        = string
+}
+
+# pass those variables through to aws_db_instance
+resource "aws_db_instance" "example" {
+  engine               = "mysql"
+  engine_version       = "5.7"
+  instance_class       = "db.t2.micro"
+  name                 = "example"
+  # Set the secrets from variables
+  username = var.username
+  password = var.password
+}
+
 
 
 
